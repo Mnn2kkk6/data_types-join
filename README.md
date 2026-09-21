@@ -31,7 +31,7 @@ Script tự tạo thư mục `data/`, chạy lại nhiều lần được:
 
 ## Dữ liệu sai đã cài (phần 3 và 5)
 
-| order_id | Lỗi cố ý | Cast thẳng cho kết quả |
+| order_id | Lỗi | Cast thẳng cho kết quả |
 |----------|----------|------------------------|
 | 2 | `"2,300,000.00"` (dấu phẩy), ngày `15/01/2024` | amount = NULL, date = NULL |
 | 3 | `"abc"`, `2024-13-45`, `not-a-timestamp` | tất cả NULL |
