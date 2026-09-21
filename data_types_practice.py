@@ -49,7 +49,7 @@ def section(title):
 
 
 # =============================================================================
-# 1. FLOAT vs DOUBLE vs DECIMAL
+# 1. FLOAT vs DOUBLE vs DECIMAL :
 # =============================================================================
 section("1. FLOAT vs DOUBLE vs DECIMAL - cộng 0.1 một triệu lần (kết quả đúng = 100000)")
 
@@ -63,7 +63,7 @@ spark.range(1_000_000).select(
 
 
 # =============================================================================
-# 2. SCHEMA THỦ CÔNG + COMPLEX TYPES
+# 2. SCHEMA THỦ CÔNG + COMPLEX TYPES:
 # =============================================================================
 section("2. Schema thủ công với String, Integer, Decimal, Date, Timestamp, Array, Struct, Map")
 
