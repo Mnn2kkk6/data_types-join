@@ -14,7 +14,7 @@ có lỗi) và customers là bảng khách hàng. Pipeline có 2 chặng dùng C
                 orders_rejected_types (lỗi kiểu dữ liệu),
                 orders_rejected_join (đúng kiểu nhưng không map được customer).
 
-Đây chính là mô hình 1 pipeline ETL thật: Bronze (raw) -> Silver (typed, validated)
+Đây chính là mô hình 1 pipeline ETL: Bronze (raw) -> Silver (typed, validated)
 -> Gold (joined, enriched), mỗi bước đều có "hàng rác" (rejected) riêng để điều tra.
 
 Chạy:  python etl_types_join_practice.py
