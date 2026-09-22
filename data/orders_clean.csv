@@ -1,0 +1,3 @@
+order_id,customer_id,customer_name,city,amount,order_date,created_at,status
+1,101,Nguyen Van A,Ha Noi,500000.00,2024-01-15,2024-01-15 08:30:00,SUCCESS
+9,102,Tran Thi B,Da Nang,230000.00,2024-01-21,2024-01-21 16:00:00,CANCELLED
