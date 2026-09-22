@@ -1,6 +1,0 @@
-order_id,customer_name,amount,order_date,created_at
-1,Nguyen Van A,1500000.50,2024-01-15,2024-01-15 08:30:00
-2,Tran Thi B,2300000.00,2024-01-15,2024-01-15 09:45:10
-4,Pham Thi D,,,
-5,Hoang Van E,,,
-8,Bui Thi H,750.00,2024-03-05,2024-03-05 12:00:00
