@@ -1,10 +1,8 @@
 # PySpark ETL Practice — Data Types + Join
 
-Bài này gộp 2 bài trước (Data Types và Join) thành 1 file, dùng chung 1 bộ dữ liệu.
-
 ## Cách chạy
 
-**Bước 1 - Cài PySpark (chỉ làm 1 lần):**
+**Bước 1 - Cài PySpark :**
 ```bash
 pip install pyspark
 ```
