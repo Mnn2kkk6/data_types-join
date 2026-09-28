@@ -1,0 +1,498 @@
+WARNING: Using incubator modules: jdk.incubator.vector
+Using Spark's default log4j profile: org/apache/spark/log4j2-defaults.properties
+26/09/28 10:13:54 WARN Utils: Your hostname, vm, resolves to a loopback address: 127.0.0.1; using 192.0.2.2 instead (on interface eth0)
+26/09/28 10:13:54 WARN Utils: Set SPARK_LOCAL_IP if you need to bind to another address
+Using Spark's default log4j profile: org/apache/spark/log4j2-defaults.properties
+Setting default log level to "WARN".
+To adjust logging level use sc.setLogLevel(newLevel). For SparkR, use setLogLevel(newLevel).
+/usr/local/lib/python3.12/dist-packages/pyspark/testing/utils.py:127: FutureWarning: PySpark does not yet fully support pandas >= 3.0.0. Some features may not work correctly. It is recommended to use pandas < 3.0.0 for now.
+  require_minimum_pandas_version()
+26/09/28 10:13:55 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+
+==========================================================================================
+0. Tạo dataset dùng chung: orders_raw (tất cả là String) + customers
+==========================================================================================
+>> customers:
++-----------+-------------+---------+
+|customer_id|customer_name|     city|
++-----------+-------------+---------+
+|        101| Nguyen Van A|   Ha Noi|
+|        102|   Tran Thi B|  Da Nang|
+|        103|     Le Van C|   TP HCM|
+|        104|   Pham Thi D|Hai Phong|
+|        105|  Hoang Van E|  Can Tho|
++-----------+-------------+---------+
+
+>> orders_raw (đọc lại từ orders_raw.csv, tất cả cột là String):
+root
+ |-- order_id_raw: string (nullable = true)
+ |-- customer_id_raw: string (nullable = true)
+ |-- amount_raw: string (nullable = true)
+ |-- order_date_raw: string (nullable = true)
+ |-- created_at_raw: string (nullable = true)
+ |-- status: string (nullable = true)
+
++------------+---------------+--------------+--------------+-------------------+---------+
+|order_id_raw|customer_id_raw|amount_raw    |order_date_raw|created_at_raw     |status   |
++------------+---------------+--------------+--------------+-------------------+---------+
+|1           |101            |500000.00     |2024-01-15    |2024-01-15 08:30:00|SUCCESS  |
+|2           |102            |2,300,000.00  |15/01/2024    |2024-01-15T09:45:10|SUCCESS  |
+|3           |999            |150000.00     |2024-01-16    |2024-01-16 10:00:00|SUCCESS  |
+|4           |NULL           |990000.00     |2024-01-17    |2024-01-17 11:00:00|SUCCESS  |
+|5           |103            |abc           |2024-01-18    |2024-01-18 12:00:00|SUCCESS  |
+|6           |104            |99999999999.99|2024-01-19    |2024-01-19 13:00:00|SUCCESS  |
+|7x          |105            |450000.00     |2024-01-20    |2024-01-20 14:00:00|SUCCESS  |
+|8           |101            |300000.00     |2024-02-30    |2024-02-30 15:00:00|SUCCESS  |
+|9           |102            | 230000.00    |2024-01-21    |2024-01-21 16:00:00|CANCELLED|
+|10          |103            |150000.00     |2024-01-22    |not-a-timestamp    |SUCCESS  |
++------------+---------------+--------------+--------------+-------------------+---------+
+
+
+==========================================================================================
+CHẶNG A - Data Types: cast String -> Int/Decimal/Date/Timestamp
+==========================================================================================
+>> Dòng cast ĐÚNG kiểu (đi tiếp sang chặng Join):
++--------+-----------+---------+----------+-------------------+---------+
+|order_id|customer_id|amount   |order_date|created_at         |status   |
++--------+-----------+---------+----------+-------------------+---------+
+|1       |101        |500000.00|2024-01-15|2024-01-15 08:30:00|SUCCESS  |
+|3       |999        |150000.00|2024-01-16|2024-01-16 10:00:00|SUCCESS  |
+|4       |NULL       |990000.00|2024-01-17|2024-01-17 11:00:00|SUCCESS  |
+|9       |102        |230000.00|2024-01-21|2024-01-21 16:00:00|CANCELLED|
++--------+-----------+---------+----------+-------------------+---------+
+
+>> Dòng REJECT vì lỗi kiểu dữ liệu (dừng lại ở đây, không join):
++------------+---------------+--------------+--------------+-------------------+-------+---------------------+
+|order_id_raw|customer_id_raw|amount_raw    |order_date_raw|created_at_raw     |status |reject_type_reason   |
++------------+---------------+--------------+--------------+-------------------+-------+---------------------+
+|2           |102            |2,300,000.00  |15/01/2024    |2024-01-15T09:45:10|SUCCESS|order_date           |
+|5           |103            |abc           |2024-01-18    |2024-01-18 12:00:00|SUCCESS|amount               |
+|6           |104            |99999999999.99|2024-01-19    |2024-01-19 13:00:00|SUCCESS|amount               |
+|7x          |105            |450000.00     |2024-01-20    |2024-01-20 14:00:00|SUCCESS|order_id             |
+|8           |101            |300000.00     |2024-02-30    |2024-02-30 15:00:00|SUCCESS|order_date,created_at|
+|10          |103            |150000.00     |2024-01-22    |not-a-timestamp    |SUCCESS|created_at           |
++------------+---------------+--------------+--------------+-------------------+-------+---------------------+
+
+>> 10 dòng raw -> 4 đúng kiểu, 6 bị reject vì lỗi kiểu
+
+==========================================================================================
+CHẶNG B - Join: ghép df_type_ok (đã đúng kiểu) với customers
+==========================================================================================
+>> Inner Join (chỉ để so sánh - sẽ mất order 3 và 4 mà không cảnh báo):
++--------+-----------+-------------+---------+---------+
+|order_id|customer_id|customer_name|   amount|   status|
++--------+-----------+-------------+---------+---------+
+|       1|        101| Nguyen Van A|500000.00|  SUCCESS|
+|       9|        102|   Tran Thi B|230000.00|CANCELLED|
++--------+-----------+-------------+---------+---------+
+
+   4 dòng đúng kiểu -> chỉ còn 2 dòng sau Inner Join
+>> Left Join (giữ đủ dòng, lộ rõ chỗ không map được):
++--------+-----------+-------------+-------+---------+---------+
+|order_id|customer_id|customer_name|   city|   amount|   status|
++--------+-----------+-------------+-------+---------+---------+
+|       3|        999|         NULL|   NULL|150000.00|  SUCCESS|
+|       4|       NULL|         NULL|   NULL|990000.00|  SUCCESS|
+|       9|        102|   Tran Thi B|Da Nang|230000.00|CANCELLED|
+|       1|        101| Nguyen Van A| Ha Noi|500000.00|  SUCCESS|
++--------+-----------+-------------+-------+---------+---------+
+
+>> MAPPED (join thành công - dữ liệu Gold, sẵn sàng dùng):
++--------+-----------+-------------+-------+---------+----------+-------------------+---------+
+|order_id|customer_id|customer_name|city   |amount   |order_date|created_at         |status   |
++--------+-----------+-------------+-------+---------+----------+-------------------+---------+
+|9       |102        |Tran Thi B   |Da Nang|230000.00|2024-01-21|2024-01-21 16:00:00|CANCELLED|
+|1       |101        |Nguyen Van A |Ha Noi |500000.00|2024-01-15|2024-01-15 08:30:00|SUCCESS  |
++--------+-----------+-------------+-------+---------+----------+-------------------+---------+
+
+>> REJECTED_JOIN (đúng kiểu nhưng không map được customer):
++--------+-----------+---------+----------+-------------------+-------+---------------------------------------------+
+|order_id|customer_id|amount   |order_date|created_at         |status |reject_join_reason                           |
++--------+-----------+---------+----------+-------------------+-------+---------------------------------------------+
+|3       |999        |150000.00|2024-01-16|2024-01-16 10:00:00|SUCCESS|customer_id=999 không tồn tại trong customers|
+|4       |NULL       |990000.00|2024-01-17|2024-01-17 11:00:00|SUCCESS|customer_id bị NULL/rỗng                     |
++--------+-----------+---------+----------+-------------------+-------+---------------------------------------------+
+
+>> Kiểm tra: mapped(2) + rejected_join(2) = đúng kiểu(4) OK
+
+==========================================================================================
+Tổng kết: orders_raw -> qua 2 chặng lọc -> orders_clean
+==========================================================================================
+
+  orders_raw (10 dòng)
+      |
+      v  CHẶNG A: cast type
+      +--> reject_type   : 6 dòng  (order_id/amount/date/timestamp sai định dạng)
+      |
+      v  (4 dòng đúng kiểu)
+      |
+      v  CHẶNG B: join với customers
+      +--> reject_join   : 2 dòng  (customer_id NULL hoặc không tồn tại)
+      |
+      v
+  orders_clean (2 dòng)  <- dữ liệu sạch, đúng kiểu, đã enrich thông tin khách hàng
+
+>> Nhận xét: nếu KHÔNG tách 2 chặng mà chỉ đo 1 con số 'tổng orders hợp lệ', sẽ không biết được lỗi nằm ở khâu làm sạch dữ liệu (Chặng A) hay khâu join (Chặng B) -> tách riêng 2 loại reject giúp debug đúng chỗ.
+
+==========================================================================================
+CHẶNG C - Performance: tạo bảng orders lớn giả lập (có skew) để quan sát
+==========================================================================================
+>> df_big: 400,000 dòng. Phân bố theo customer_id:
++-----------+------+
+|customer_id| count|
++-----------+------+
+|        101|320000|
+|        105| 20000|
+|        102| 20000|
+|        104| 20000|
+|        103| 20000|
++-----------+------+
+
+
+==========================================================================================
+C1. Shuffle - operation nào gây Exchange?
+==========================================================================================
+Shuffle = Spark phải chuyển dữ liệu giữa các executor qua mạng/đĩa để gom các dòng
+cùng key về cùng partition. Đây thường là bước ĐẮT NHẤT của job.
+  - Narrow (KHÔNG shuffle): select, filter, withColumn, cast, union...
+  - Wide   (CÓ shuffle)   : join, groupBy/agg, distinct, orderBy, repartition...
+   filter + withColumn (narrow)     -> số Exchange (shuffle): 0
+   groupBy + sum (wide)             -> số Exchange (shuffle): 1
+   join với customers (wide)        -> số Exchange (shuffle): 2
+
+>> Plan của groupBy (tìm dòng 'Exchange hashpartitioning'):
+== Physical Plan ==
+*(2) HashAggregate(keys=[customer_id#4753], functions=[sum(amount#4754)])
++- Exchange hashpartitioning(customer_id#4753, 8), ENSURE_REQUIREMENTS, [plan_id=539]
+   +- *(1) HashAggregate(keys=[customer_id#4753], functions=[partial_sum(amount#4754)])
+      +- *(1) Project [CASE WHEN ((id#4752L % 10) < 8) THEN 101 ELSE cast(((id#4752L % 4) + 102) as int) END AS customer_id#4753, cast((rand(42) * 1000000.0) as decimal(12,2)) AS amount#4754]
+         +- *(1) Range (0, 400000, step=1, splits=8)
+
+
+Ghi nhớ: groupBy sinh 2 bước HashAggregate (partial -> shuffle -> final).
+Partial aggregate chạy TRƯỚC shuffle nên dữ liệu gửi đi đã được thu nhỏ: đó là lý do
+agg(sum/count) rẻ hơn nhiều so với groupBy rồi mới xử lý từng nhóm.
+
+==========================================================================================
+C2. repartition vs coalesce
+==========================================================================================
+>> df_big hiện có 8 partition
+   repartition(8)                 -> 8 partition, shuffle: 1
+   repartition(4, 'customer_id')  -> 4 partition, shuffle: 1
+   repartition(8).coalesce(2)     -> 2 partition
+
+>> Plan coalesce trực tiếp trên df_big (chú ý: KHÔNG có Exchange mới cho coalesce):
+== Physical Plan ==
+Coalesce 2
++- *(1) Project [id#4752L AS order_id#4755L, customer_id#4753, amount#4754]
+   +- *(1) Project [id#4752L, CASE WHEN ((id#4752L % 10) < 8) THEN 101 ELSE cast(((id#4752L % 4) + 102) as int) END AS customer_id#4753, cast((rand(42) * 1000000.0) as decimal(12,2)) AS amount#4754]
+      +- *(1) Range (0, 400000, step=1, splits=8)
+
+
+So sánh:
+  repartition(n) : FULL SHUFFLE, chia đều được, TĂNG hoặc GIẢM số partition.
+                   Dùng khi: cần tăng song song, sửa partition lệch, hoặc chia theo cột
+                   (repartition(n, 'col')) trước join/groupBy/ghi file partitionBy.
+  coalesce(n)    : KHÔNG shuffle, chỉ gộp partition cạnh nhau -> chỉ GIẢM được,
+                   partition có thể không đều. Dùng khi: giảm số file nhỏ trước khi ghi.
+  Lưu ý: export_single_csv() ở dưới dùng coalesce(1) -> toàn bộ dữ liệu ghi bởi 1 task.
+         OK với bài nhỏ này, nhưng với dữ liệu lớn sẽ là nút thắt (chậm/OOM).
+
+==========================================================================================
+C3. Broadcast Join - bảng lớn join bảng nhỏ
+==========================================================================================
+   Không hint          : SortMergeJoin      | shuffle: 2 (cả 2 bảng bị shuffle theo customer_id)
+   F.broadcast(nhỏ)    : BroadcastHashJoin  | shuffle: 0 (bảng lớn KHÔNG bị shuffle)
+
+>> Plan BroadcastHashJoin (tìm BroadcastExchange):
+== Physical Plan ==
+*(2) Project [customer_id#4753, order_id#4755L, amount#4754, customer_name#1, city#2]
++- *(2) BroadcastHashJoin [customer_id#4753], [customer_id#0], LeftOuter, BuildRight, false, false
+   :- *(2) Project [id#4752L AS order_id#4755L, customer_id#4753, amount#4754]
+   :  +- *(2) Project [id#4752L, CASE WHEN ((id#4752L % 10) < 8) THEN 101 ELSE cast(((id#4752L % 4) + 102) as int) END AS customer_id#4753, cast((rand(42) * 1000000.0) as decimal(12,2)) AS amount#4754]
+   :     +- *(2) Range (0, 400000, step=1, splits=8)
+   +- BroadcastExchange HashedRelationBroadcastMode(List(cast(input[0, int, false] as bigint)),false), [plan_id=817]
+      +- *(1) Filter isnotnull(customer_id#0)
+         +- *(1) Scan ExistingRDD[customer_id#0,customer_name#1,city#2]
+
+
+   [SortMergeJoin   ] 2.44s
+   [BroadcastHashJoin] 0.98s
+Ghi nhớ:
+  - Broadcast: gửi nguyên bảng nhỏ tới MỌI executor -> bảng lớn join tại chỗ, không shuffle.
+  - Chỉ nên broadcast bảng thực sự nhỏ (ngưỡng mặc định 10MB); quá lớn -> OOM driver/executor.
+  - Left join chỉ broadcast được bảng BÊN PHẢI (bảng bị giữ lại toàn bộ không broadcast được).
+  - Bảng customers ở bài này (5 dòng) là ứng viên broadcast điển hình (dimension table).
+
+==========================================================================================
+C4. Cache / Persist - DataFrame dùng lại nhiều lần
+==========================================================================================
+>> df_typed đã persist ở Chặng A: storageLevel = Disk Memory Serialized 1x Replicated
+>> df_left  đã persist ở Chặng B: storageLevel = Disk Memory Serialized 1x Replicated
+
+>> Plan của df_type_ok: thấy InMemoryTableScan = đọc từ cache thay vì tính lại từ CSV:
+== Physical Plan ==
+*(1) Project [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
++- *(1) Filter (reject_type_reason#65 = )
+   +- InMemoryTableScan [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24], [(reject_type_reason#65 = )]
+         +- InMemoryRelation [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, reject_type_reason#65], StorageLevel(disk, memory, 1 replicas)
+               +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+                  +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+                     +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56, cast(cust_s#52 as int) AS customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58, cast(gettimestamp(date_s#54, yyyy-MM-dd, TimestampType, try_to_date, Some(Etc/UTC), false) as date) AS order_date#59, cast(ts_s#55 as timestamp) AS created_at#60]
+                        +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN null ELSE trim(order_id_raw#19, None) END AS id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN null ELSE trim(customer_id_raw#20, None) END AS cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN null ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN null ELSE trim(order_date_raw#22, None) END AS date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN null ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+                           +- FileScan csv [order_id_raw#19,customer_id_raw#20,amount_raw#21,order_date_raw#22,created_at_raw#23,status#24] Batched: false, DataFilters: [], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/mnt/user-data/outputs/data/orders_raw.csv], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<order_id_raw:string,customer_id_raw:string,amount_raw:string,order_date_raw:string,created...
+
+
+>> Demo trên df_big: cùng 1 DataFrame tính toán nặng, gọi 3 action liên tiếp
+   [KHÔNG cache, 3 action] 1.41s
+   [CÓ cache,   3 action] 0.59s
+Ghi nhớ:
+  - cache() = persist(MEMORY_AND_DISK) cho DataFrame. Cache là LAZY, cần 1 action để nạp.
+  - Chỉ cache khi DataFrame được DÙNG LẠI (≥2 action/nhánh) và tính toán đủ đắt.
+    Cache thứ chỉ dùng 1 lần chỉ tốn RAM.
+  - Xong việc nhớ unpersist() để nhả bộ nhớ.
+
+==========================================================================================
+C5. Data Skew - dữ liệu lệch làm 1 task chạy lâu hơn hẳn
+==========================================================================================
+>> Chia df_big theo customer_id thành 4 partition (như khi shuffle cho groupBy/join):
+   partition 0:  320,000 dòng ( 80.0%) ################################
+   partition 1:   20,000 dòng (  5.0%) ##
+   partition 2:   40,000 dòng ( 10.0%) ####
+   partition 3:   20,000 dòng (  5.0%) ##
+   => partition nặng nhất gấp 3.2x mức trung bình. Cả stage phải chờ task chậm nhất (straggler).
+
+>> Sau khi thêm salt (chia theo customer_id + salt):
+   partition 0:  100,335 dòng ( 25.1%) ##########
+   partition 1:  115,047 dòng ( 28.8%) ###########
+   partition 2:   94,835 dòng ( 23.7%) #########
+   partition 3:   89,783 dòng ( 22.4%) ########
+   => nặng nhất còn 1.2x mức trung bình
+
+>> Kiểm tra: aggregate có salt (2 bước) == aggregate trực tiếp  OK
++-----------+---------------+------+
+|customer_id|          total|     n|
++-----------+---------------+------+
+|        101|159833117811.63|320000|
+|        102|  9965710623.75| 20000|
+|        103|  9928410164.31| 20000|
+|        104|  9960795444.36| 20000|
+|        105|  9978257848.12| 20000|
++-----------+---------------+------+
+
+Ghi nhớ:
+  - Nhận biết skew: 1 task trong Spark UI (tab Stages) chạy lâu/đọc nhiều dữ liệu hơn hẳn,
+    hoặc groupBy(key).count() cho thấy 1 key chiếm tỉ lệ rất lớn (như customer 101 ở đây).
+  - Cách xử lý: (1) BẬT AQE + spark.sql.adaptive.skewJoin.enabled (Spark 3+ tự chẻ partition lệch khi join),
+    (2) salting như trên cho aggregate, (3) broadcast bảng nhỏ để né shuffle,
+    (4) tách riêng key nóng xử lý riêng rồi union lại.
+  - NULL / giá trị mặc định (0, -1, '') cũng hay là 'key nóng' vô tình: kiểm tra trước khi join.
+
+==========================================================================================
+C6. explain() - đọc plan để tìm chỗ tối ưu
+==========================================================================================
+>> explain(mode='formatted') cho bước Left Join của pipeline chính (df_type_ok LEFT JOIN customers):
+== Physical Plan ==
+InMemoryTableScan (1)
+   +- InMemoryRelation (2)
+         +- * Project (19)
+            +- * SortMergeJoin LeftOuter (18)
+               :- * Sort (13)
+               :  +- Exchange (12)
+               :     +- * Project (11)
+               :        +- * Filter (10)
+               :           +- InMemoryTableScan (3)
+               :                 +- InMemoryRelation (4)
+               :                       +- * Project (9)
+               :                          +- * Project (8)
+               :                             +- * Project (7)
+               :                                +- * Project (6)
+               :                                   +- Scan csv  (5)
+               +- * Sort (17)
+                  +- Exchange (16)
+                     +- * Filter (15)
+                        +- * Scan ExistingRDD (14)
+
+
+(1) InMemoryTableScan
+Output [8]: [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
+Arguments: [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
+
+(2) InMemoryRelation
+Arguments: [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2], StorageLevel(disk, memory, 1 replicas)
+
+(3) InMemoryTableScan
+Output [7]: [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24]
+Arguments: [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24], [(reject_type_reason#65 = )]
+
+(4) InMemoryRelation
+Arguments: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, reject_type_reason#65], StorageLevel(disk, memory, 1 replicas)
+
+(5) Scan csv 
+Output [6]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24]
+Batched: false
+Location: InMemoryFileIndex [file:/mnt/user-data/outputs/data/orders_raw.csv]
+ReadSchema: struct<order_id_raw:string,customer_id_raw:string,amount_raw:string,order_date_raw:string,created_at_raw:string,status:string>
+
+(6) Project [codegen id : 1]
+Output [11]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN null ELSE trim(order_id_raw#19, None) END AS id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN null ELSE trim(customer_id_raw#20, None) END AS cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN null ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN null ELSE trim(order_date_raw#22, None) END AS date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN null ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+Input [6]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24]
+
+(7) Project [codegen id : 1]
+Output [16]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56, cast(cust_s#52 as int) AS customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58, cast(gettimestamp(date_s#54, yyyy-MM-dd, TimestampType, try_to_date, Some(Etc/UTC), false) as date) AS order_date#59, cast(ts_s#55 as timestamp) AS created_at#60]
+Input [11]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55]
+
+(8) Project [codegen id : 1]
+Output [20]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+Input [16]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60]
+
+(9) Project [codegen id : 1]
+Output [21]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+Input [20]: [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64]
+
+(10) Filter [codegen id : 1]
+Input [7]: [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24]
+Condition : (reject_type_reason#65 = )
+
+(11) Project [codegen id : 1]
+Output [6]: [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+Input [7]: [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24]
+
+(12) Exchange
+Input [6]: [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+Arguments: hashpartitioning(customer_id#57, 8), ENSURE_REQUIREMENTS, [plan_id=332]
+
+(13) Sort [codegen id : 2]
+Input [6]: [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+Arguments: [customer_id#57 ASC NULLS FIRST], false, 0
+
+(14) Scan ExistingRDD [codegen id : 3]
+Output [3]: [customer_id#0, customer_name#1, city#2]
+Arguments: [customer_id#0, customer_name#1, city#2], MapPartitionsRDD[4] at applySchemaToPythonRDD at DirectMethodHandleAccessor.java:103, ExistingRDD, UnknownPartitioning(0)
+
+(15) Filter [codegen id : 3]
+Input [3]: [customer_id#0, customer_name#1, city#2]
+Condition : isnotnull(customer_id#0)
+
+(16) Exchange
+Input [3]: [customer_id#0, customer_name#1, city#2]
+Arguments: hashpartitioning(customer_id#0, 8), ENSURE_REQUIREMENTS, [plan_id=338]
+
+(17) Sort [codegen id : 4]
+Input [3]: [customer_id#0, customer_name#1, city#2]
+Arguments: [customer_id#0 ASC NULLS FIRST], false, 0
+
+(18) SortMergeJoin [codegen id : 5]
+Left keys [1]: [customer_id#57]
+Right keys [1]: [customer_id#0]
+Join type: LeftOuter
+Join condition: None
+
+(19) Project [codegen id : 5]
+Output [8]: [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
+Input [9]: [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24, customer_id#0, customer_name#1, city#2]
+
+
+Cách đọc plan:
+  1. ĐỌC TỪ DƯỚI LÊN TRÊN (nguồn dữ liệu ở dưới, kết quả cuối ở trên).
+  2. Các từ khoá cần tìm:
+       Scan / InMemoryTableScan : nguồn đọc (file hay cache)
+       Filter / Project         : lọc / chọn cột (nên đẩy xuống gần Scan = predicate/column pruning)
+       Exchange ...             : SHUFFLE  -> càng ít càng tốt
+       BroadcastExchange        : broadcast bảng nhỏ (tốt)
+       SortMergeJoin / BroadcastHashJoin : chiến lược join Spark chọn
+       HashAggregate            : groupBy/agg (partial + final)
+  3. Các chế độ: explain() = physical | explain(True) = đủ 4 plan (parsed/analyzed/optimized/physical)
+                 explain('formatted') = dạng cây gọn + chi tiết từng node | explain('cost') = có thống kê.
+  4. Checklist khi job chậm:
+       [ ] Có bao nhiêu Exchange? Bỏ được cái nào không (broadcast, lọc sớm, chọn cột sớm)?
+       [ ] Join đang là SortMergeJoin dù 1 bên rất nhỏ? -> broadcast
+       [ ] Cùng 1 nhánh được tính lại nhiều lần? -> cache
+       [ ] Spark UI có task lệch (skew)? -> salting / AQE skew join
+       [ ] Quá nhiều partition nhỏ hoặc quá ít partition lớn? -> shuffle.partitions / repartition / coalesce
+
+>> explain(True) của Inner Join đơn giản (để thấy 4 giai đoạn plan):
+== Parsed Logical Plan ==
+'Join UsingJoin(Inner, [customer_id])
+:- Project [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+:  +- Filter NOT NOT (reject_type_reason#65 = )
+:     +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+:        +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+:           +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63]
+:              +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62]
+:                 +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61]
+:                    +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, to_timestamp(ts_s#55, None, TimestampType, Some(Etc/UTC), false) AS created_at#60]
+:                       +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, to_date(date_s#54, Some(yyyy-MM-dd), Some(Etc/UTC), false) AS order_date#59]
+:                          +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58]
+:                             +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, cast(cust_s#52 as int) AS customer_id#57]
+:                                +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56]
+:                                   +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN cast(null as string) ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+:                                      +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN cast(null as string) ELSE trim(order_date_raw#22, None) END AS date_s#54]
+:                                         +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN cast(null as string) ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53]
+:                                            +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN cast(null as string) ELSE trim(customer_id_raw#20, None) END AS cust_s#52]
+:                                               +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN cast(null as string) ELSE trim(order_id_raw#19, None) END AS id_s#51]
+:                                                  +- Relation [order_id_raw#19,customer_id_raw#20,amount_raw#21,order_date_raw#22,created_at_raw#23,status#24] csv
++- LogicalRDD [customer_id#0, customer_name#1, city#2], false
+
+== Analyzed Logical Plan ==
+customer_id: int, order_id: int, amount: decimal(12,2), order_date: date, created_at: timestamp, status: string, customer_name: string, city: string
+Project [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
++- Join Inner, (customer_id#57 = customer_id#0)
+   :- Project [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+   :  +- Filter NOT NOT (reject_type_reason#65 = )
+   :     +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+   :        +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+   :           +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63]
+   :              +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62]
+   :                 +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61]
+   :                    +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, to_timestamp(ts_s#55, None, TimestampType, Some(Etc/UTC), false) AS created_at#60]
+   :                       +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, to_date(date_s#54, Some(yyyy-MM-dd), Some(Etc/UTC), false) AS order_date#59]
+   :                          +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58]
+   :                             +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, cast(cust_s#52 as int) AS customer_id#57]
+   :                                +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56]
+   :                                   +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN cast(null as string) ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+   :                                      +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN cast(null as string) ELSE trim(order_date_raw#22, None) END AS date_s#54]
+   :                                         +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN cast(null as string) ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53]
+   :                                            +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN cast(null as string) ELSE trim(customer_id_raw#20, None) END AS cust_s#52]
+   :                                               +- Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN cast(null as string) ELSE trim(order_id_raw#19, None) END AS id_s#51]
+   :                                                  +- Relation [order_id_raw#19,customer_id_raw#20,amount_raw#21,order_date_raw#22,created_at_raw#23,status#24] csv
+   +- LogicalRDD [customer_id#0, customer_name#1, city#2], false
+
+== Optimized Logical Plan ==
+Project [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
++- Join Inner, (customer_id#57 = customer_id#0)
+   :- Project [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+   :  +- Filter ((reject_type_reason#65 = ) AND isnotnull(customer_id#57))
+   :     +- InMemoryRelation [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, reject_type_reason#65], StorageLevel(disk, memory, 1 replicas)
+   :           +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+   :              +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+   :                 +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56, cast(cust_s#52 as int) AS customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58, cast(gettimestamp(date_s#54, yyyy-MM-dd, TimestampType, try_to_date, Some(Etc/UTC), false) as date) AS order_date#59, cast(ts_s#55 as timestamp) AS created_at#60]
+   :                    +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN null ELSE trim(order_id_raw#19, None) END AS id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN null ELSE trim(customer_id_raw#20, None) END AS cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN null ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN null ELSE trim(order_date_raw#22, None) END AS date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN null ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+   :                       +- FileScan csv [order_id_raw#19,customer_id_raw#20,amount_raw#21,order_date_raw#22,created_at_raw#23,status#24] Batched: false, DataFilters: [], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/mnt/user-data/outputs/data/orders_raw.csv], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<order_id_raw:string,customer_id_raw:string,amount_raw:string,order_date_raw:string,created...
+   +- Filter isnotnull(customer_id#0)
+      +- LogicalRDD [customer_id#0, customer_name#1, city#2], false
+
+== Physical Plan ==
+*(2) Project [customer_id#57, order_id#56, amount#58, order_date#59, created_at#60, status#24, customer_name#1, city#2]
++- *(2) BroadcastHashJoin [customer_id#57], [customer_id#0], Inner, BuildLeft, false, false
+   :- BroadcastExchange HashedRelationBroadcastMode(List(cast(input[1, int, true] as bigint)),false), [plan_id=1611]
+   :  +- *(1) Project [order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, status#24]
+   :     +- *(1) Filter ((reject_type_reason#65 = ) AND isnotnull(customer_id#57))
+   :        +- InMemoryTableScan [amount#58, created_at#60, customer_id#57, order_date#59, order_id#56, reject_type_reason#65, status#24], [(reject_type_reason#65 = ), isnotnull(customer_id#57)]
+   :              +- InMemoryRelation [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, reject_type_reason#65], StorageLevel(disk, memory, 1 replicas)
+   :                    +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, bad_id#61, bad_amount#62, bad_date#63, bad_ts#64, concat_ws(,, CASE WHEN bad_id#61 THEN order_id END, CASE WHEN bad_amount#62 THEN amount END, CASE WHEN bad_date#63 THEN order_date END, CASE WHEN bad_ts#64 THEN created_at END) AS reject_type_reason#65]
+   :                       +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, order_id#56, customer_id#57, amount#58, order_date#59, created_at#60, (isnotnull(id_s#51) AND isnull(order_id#56)) AS bad_id#61, (isnotnull(amount_s#53) AND isnull(amount#58)) AS bad_amount#62, (isnotnull(date_s#54) AND isnull(order_date#59)) AS bad_date#63, (isnotnull(ts_s#55) AND isnull(created_at#60)) AS bad_ts#64]
+   :                          +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, id_s#51, cust_s#52, amount_s#53, date_s#54, ts_s#55, cast(id_s#51 as int) AS order_id#56, cast(cust_s#52 as int) AS customer_id#57, cast(amount_s#53 as decimal(12,2)) AS amount#58, cast(gettimestamp(date_s#54, yyyy-MM-dd, TimestampType, try_to_date, Some(Etc/UTC), false) as date) AS order_date#59, cast(ts_s#55 as timestamp) AS created_at#60]
+   :                             +- *(1) Project [order_id_raw#19, customer_id_raw#20, amount_raw#21, order_date_raw#22, created_at_raw#23, status#24, CASE WHEN (trim(order_id_raw#19, None) = ) THEN null ELSE trim(order_id_raw#19, None) END AS id_s#51, CASE WHEN (trim(customer_id_raw#20, None) = ) THEN null ELSE trim(customer_id_raw#20, None) END AS cust_s#52, regexp_replace(CASE WHEN (trim(amount_raw#21, None) = ) THEN null ELSE trim(amount_raw#21, None) END, ,, , 1) AS amount_s#53, CASE WHEN (trim(order_date_raw#22, None) = ) THEN null ELSE trim(order_date_raw#22, None) END AS date_s#54, CASE WHEN (trim(created_at_raw#23, None) = ) THEN null ELSE trim(created_at_raw#23, None) END AS ts_s#55]
+   :                                +- FileScan csv [order_id_raw#19,customer_id_raw#20,amount_raw#21,order_date_raw#22,created_at_raw#23,status#24] Batched: false, DataFilters: [], Format: CSV, Location: InMemoryFileIndex(1 paths)[file:/mnt/user-data/outputs/data/orders_raw.csv], PartitionFilters: [], PushedFilters: [], ReadSchema: struct<order_id_raw:string,customer_id_raw:string,amount_raw:string,order_date_raw:string,created...
+   +- *(2) Filter isnotnull(customer_id#0)
+      +- *(2) Scan ExistingRDD[customer_id#0,customer_name#1,city#2]
+
+
+==========================================================================================
+Xuất kết quả ra CSV
+==========================================================================================
+>> Đã ghi:
+   /mnt/user-data/outputs/data/orders_clean.csv
+   /mnt/user-data/outputs/data/orders_rejected_types.csv
+   /mnt/user-data/outputs/data/orders_rejected_join.csv
